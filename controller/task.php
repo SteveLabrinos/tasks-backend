@@ -22,9 +22,90 @@ try {
     $response->addMessage("Database Connection Error");
     $response->send();
 
-    exit();
+    exit;
 }
 
+//  Begin the auth script to check that the user is active
+//  the login attempts haven't locked him out 
+//  and the refresh token has not expired
+
+//  get the action token
+if (!isset($_SERVER['HTTP_AUTHORIZATION']) || strlen($_SERVER['HTTP_AUTHORIZATION']) < 0) {
+    $response = new Response();
+    $response->setHttpStatusCode(401);
+    $response->setSuccess(false);
+    !isset($_SERVER['HTTP_AUTHORIZATION']) ? $response->addMessage("Access token is missing from  header") : false;
+    strlen($_SERVER['HTTP_AUTHORIZATION']) < 0 ? $response->addMessage("Access token cannot be blank") : false;
+    $response->send();
+    exit;
+}
+
+$accessToken = $_SERVER['HTTP_AUTHORIZATION'];
+
+//  retrieve the user credentials for the access token
+try {
+    $query = 'SELECT userid, user_active, login_attempts, accesstokenexpiry
+              FROM tblsessions JOIN tblusers ON tblsessions.userid = tblusers.id
+              WHERE accesstoken = :accessToken';
+    $stmt = $writeDB->prepare($query);
+    $stmt->bindParam(':accessToken', $accessToken, PDO::PARAM_STR);
+    $stmt->execute();
+
+    $rowCount = $stmt->rowCount();
+
+    if ($rowCount === 0) {
+        $response = new Response();
+        $response->setHttpStatusCode(401);
+        $response->setSuccess(false);
+        $response->addMessage("Failed to retrieve user credential for the access token");
+        $response->send();
+        exit;
+    }
+} catch (PDOException $ex) {
+    $response = new Response();
+    $response->setHttpStatusCode(500);
+    $response->setSuccess(false);
+    $response->addMessage("Failed to execute database query");
+    $response->send();
+    exit;
+}
+
+$row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+$returnUserId = $row['userid'];
+$returnUserActive = $row['user_active'];
+$returnLoginAttempts = $row['login_attempts'];
+$returnAccessTokenExpiry = $row['accesstokenexpiry'];
+
+//  check that the user is active
+if ($returnUserActive !== 'Y') {
+    $response = new Response();
+    $response->setHttpStatusCode(401);
+    $response->setSuccess(false);
+    $response->addMessage("User account not active");
+    $response->send();
+    exit;
+}
+
+//  check the number of login attempts
+if ($returnLoginAttempts >= 3) {
+    $response = new Response();
+    $response->setHttpStatusCode(401);
+    $response->setSuccess(false);
+    $response->addMessage("User account is locked out");
+    $response->send();
+    exit;
+}
+
+//  check that the access token has not expired
+if (strtotime($returnAccessTokenExpiry) < time()) {
+    $response = new Response();
+    $response->setHttpStatusCode(401);
+    $response->setSuccess(false);
+    $response->addMessage("Access token expired");
+    $response->send();
+    exit;
+}
 
 //  get a single task
 //  url example -> tasks/1
